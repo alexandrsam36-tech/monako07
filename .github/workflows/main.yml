@@ -43,7 +43,8 @@ jobs:
           PROJECT="."
 
           if [ ! -f settings.gradle.kts ] && [ ! -f settings.gradle ]; then
-            ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+            ZIP_FILE=$(find . -maxdepth 4 -type f -iname "*.zip" | head -n 1)
+
             if [ -n "$ZIP_FILE" ]; then
               mkdir -p "$RUNNER_TEMP/hp_project"
               unzip -oq "$ZIP_FILE" -d "$RUNNER_TEMP/hp_project"
@@ -56,44 +57,83 @@ jobs:
             | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "Gradle project not found"
-            find . -maxdepth 4 -type f
+            echo "ERROR: Gradle project not found"
+            find . -maxdepth 5 -type f
             exit 1
           fi
 
           PROJECT=$(dirname "$SETTINGS")
           echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+          echo "Project found: $PROJECT"
+
+      - name: Fix Kotlin layout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("app/src/main/java/com/example/hpusbprintdiagnostic/MainActivity.kt")
+          s = p.read_text(encoding="utf-8")
+
+          old = """            addView(ScrollView(this@MainActivity).apply {
+                          addView(output)
+                      }, LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)"""
+
+          new = """            addView(ScrollView(this@MainActivity).apply {
+                          addView(output)
+                      }, LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT,
+                          0,
+                          1f
+                      ))"""
+
+          if old not in s:
+              print("Checking alternate layout formatting...")
+              import re
+              pattern = r'addView\(ScrollView\(this@MainActivity\)\.apply\s*\{\s*addView\(output\)\s*\},\s*LinearLayout\.LayoutParams\.MATCH_PARENT,\s*0,\s*1f\)'
+              s, count = re.subn(
+                  pattern,
+                  'addView(ScrollView(this@MainActivity).apply { addView(output) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))',
+                  s,
+                  count=1
+              )
+              if count == 0:
+                  raise SystemExit("ERROR: Could not locate incorrect addView code")
+
+          else:
+              s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding="utf-8")
+          print("Kotlin layout successfully corrected")
+          PY
+        working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Fix JVM compatibility
         run: |
-          cat > "$PROJECT_DIR/app/build.gradle.kts" <<'EOF'
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-          }
+          python3 - <<'PY'
+          from pathlib import Path
 
-          android {
-              namespace = "com.example.hpusbprintdiagnostic"
-              compileSdk = 35
+          p = Path("app/build.gradle.kts")
+          s = p.read_text(encoding="utf-8")
 
-              defaultConfig {
-                  applicationId = "com.example.hpusbprintdiagnostic"
-                  minSdk = 26
-                  targetSdk = 35
-                  versionCode = 1
-                  versionName = "1.0"
-              }
+          if "sourceCompatibility" not in s:
+              s = s.replace(
+                  "    defaultConfig {",
+                  """    compileOptions {
+                      sourceCompatibility = JavaVersion.VERSION_17
+                      targetCompatibility = JavaVersion.VERSION_17
+                  }
 
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
+                  kotlinOptions {
+                      jvmTarget = "17"
+                  }
 
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-          }
-          EOF
+                  defaultConfig {"""
+              )
+
+          p.write_text(s, encoding="utf-8")
+          print("JVM compatibility configured")
+          PY
+        working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Build APK
         run: gradle assembleDebug
@@ -104,3 +144,4 @@ jobs:
         with:
           name: HP-USB-Print-Diagnostic
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
