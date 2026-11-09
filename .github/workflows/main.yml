@@ -22,14 +22,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK
+      - name: Locate Android SDK
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager --install \
+          echo "Checking Android SDK..."
+          ls -la "$ANDROID_HOME/cmdline-tools/"
+          find "$ANDROID_HOME/cmdline-tools" -name sdkmanager
+
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          chmod +x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Download Gradle directly
+      - name: Download Gradle
         run: |
           cd "$RUNNER_TEMP"
           curl -fL --retry 5 --retry-all-errors \
@@ -38,8 +46,11 @@ jobs:
           unzip -q gradle.zip
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
-      - name: Check Gradle
-        run: gradle --version
+      - name: Check tools
+        run: |
+          java -version
+          gradle --version
+          ls "$ANDROID_HOME/platforms"
 
       - name: Build APK
         run: gradle assembleDebug
