@@ -23,12 +23,6 @@ jobs:
         with:
           packages: ''
 
-      - name: Check Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          which sdkmanager
-          sdkmanager --version
-
       - name: Install Android packages
         run: |
           sdkmanager --install \
@@ -44,11 +38,41 @@ jobs:
           unzip -q gradle.zip
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
+      - name: Find and prepare project
+        run: |
+          PROJECT="."
+
+          if [ ! -f settings.gradle.kts ] && [ ! -f settings.gradle ]; then
+            ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+
+            if [ -n "$ZIP_FILE" ]; then
+              mkdir -p "$RUNNER_TEMP/hp_project"
+              unzip -oq "$ZIP_FILE" -d "$RUNNER_TEMP/hp_project"
+              PROJECT="$RUNNER_TEMP/hp_project"
+            fi
+          fi
+
+          SETTINGS=$(find "$PROJECT" -type f \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
+            -not -path '*/.gradle/*' | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: Gradle project not found!"
+            find . -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT=$(dirname "$SETTINGS")
+          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+          echo "Project found: $PROJECT"
+
       - name: Build APK
         run: gradle assembleDebug
+        working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: HP-USB-Print-Diagnostic
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+
